@@ -16,6 +16,7 @@ class TTSEngine(TTSInterface):
         seed=0,
         api_name="/generate_audio",
     ):
+        super().__init__(stream=False)  # not yet implemented so set to false
         self.client = Client(client_url)
 
         self.mode_checkbox_group = mode_checkbox_group

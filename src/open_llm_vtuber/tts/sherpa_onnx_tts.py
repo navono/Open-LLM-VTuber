@@ -26,6 +26,7 @@ class TTSEngine(TTSInterface):
         speed=1.0,
         debug=False,
     ):
+        super().__init__(stream=False)  # not yet implemented so set to false
         self.vits_model = vits_model
         self.vits_lexicon = vits_lexicon
         self.vits_tokens = vits_tokens

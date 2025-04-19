@@ -17,6 +17,7 @@ class TTSEngine(TTSInterface):
         device: str = "auto",
         speed: float = 1.0,
     ):
+        super().__init__(stream=False)  # not yet implemented so set to false
         # Speed is adjustable
         self.speed = speed
 

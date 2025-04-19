@@ -1,5 +1,6 @@
-import sys
 import os
+import sys
+from typing import AsyncGenerator
 
 import edge_tts
 from loguru import logger
@@ -14,7 +15,19 @@ sys.path.append(current_dir)
 
 
 class TTSEngine(TTSInterface):
-    def __init__(self, voice="en-US-AvaMultilingualNeural"):
+    def __init__(self, voice="en-US-AvaMultilingualNeural", stream=False):
+        """
+        Initializes edge tts instance.
+        Args:
+            voice (str): The voice to use for TTS.
+            stream (bool): Whether to stream the audio or not.
+        """
+        super().__init__(stream=stream)
+
+        if stream:
+            logger.critical("Edge-TTS 流式输出启动！")
+        logger.warning(f"stream: {self.stream}")
+
         self.voice = voice
 
         self.temp_audio_file = "temp"
@@ -48,6 +61,36 @@ class TTSEngine(TTSInterface):
             return None
 
         return file_name
+
+    async def async_stream_audio(self, sentence_text: str) -> AsyncGenerator[bytes, None]:
+        """
+        Async generator to stream audio data from edge-tts for a given text.
+        Args:
+            sentence_text (str): The text to be converted to speech.
+        Yields:
+            bytes: The audio data chunks.
+        """
+        try:
+            communicate = edge_tts.Communicate(sentence_text, self.voice)
+
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
+                #
+                # elif chunk["type"] == "WordBoundary":
+                # submaker.feed(chunk)
+        except edge_tts.exceptions.NoAudioReceived as e:
+            logger.error(f"No audio received from edge-tts: {e}")
+            raise e
+        except edge_tts.exceptions.UnexpectedResponse as e:
+            logger.error(f"Unexpected response from edge-tts: {e}")
+            raise e
+        except edge_tts.exceptions.UnknownResponse as e:
+            logger.error(f"Unknown response from edge-tts: {e}")
+            raise e
+        except edge_tts.exceptions.WebSocketError as e:
+            logger.error(f"WebSocket error with edge-tts: {e}")
+            raise e
 
 
 # en-US-AvaMultilingualNeural

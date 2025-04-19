@@ -44,12 +44,14 @@ class EdgeTTSConfig(I18nMixin):
     """Configuration for Edge TTS."""
 
     voice: str = Field(..., alias="voice")
+    stream: bool = Field(default=False, alias="stream")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "voice": Description(
             en="Voice name to use for Edge TTS (use 'edge-tts --list-voices' to list available voices)",
             zh="Edge TTS 使用的语音名称（使用 'edge-tts --list-voices' 列出可用语音）",
         ),
+        "stream": Description(en="Enable streaming output", zh="启用流式输出"),
     }
 
 
@@ -336,7 +338,7 @@ class OpenAITTSConfig(I18nMixin):
 
 class SparkTTSConfig(I18nMixin):
     """Configuration for Spark TTS."""
-    
+
     api_url: str = Field(..., alias="api_url")
     prompt_wav_upload: str = Field(..., alias="prompt_wav_upload")
     api_name: str = Field(..., alias="api_name")

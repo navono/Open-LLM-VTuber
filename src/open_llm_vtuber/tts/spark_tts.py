@@ -14,6 +14,7 @@ class TTSEngine(TTSInterface):
         pitch: int = 3,
         speed: int = 3,
     ):
+        super().__init__(stream=False)  # not yet implemented so set to false
         self.api_url = api_url
         self.new_audio_dir = "cache"
         self.file_extension = "wav"

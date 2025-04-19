@@ -33,6 +33,8 @@ class TTSEngine(TTSInterface):
 
         """
 
+        super().__init__(stream=False)  # not yet implemented so set to false
+
         logger.info(
             f"\nFish TTS API initialized with api key: {api_key} baseurl: {base_url} reference_id: {reference_id}, latency: {latency}"
         )

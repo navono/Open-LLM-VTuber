@@ -27,6 +27,8 @@ class TTSEngine(TTSInterface):
         rate: float
             the speaking rate. Default is 1.0 (normal speed)
         """
+        super().__init__(stream=False)  # not yet implemented so set to false
+        
         # This example requires environment variables named "SPEECH_KEY" and "SPEECH_REGION"
         self.speech_config = speechsdk.SpeechConfig(subscription=api_key, region=region)
         # The language of the voice that speaks.

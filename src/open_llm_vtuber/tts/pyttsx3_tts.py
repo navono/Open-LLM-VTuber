@@ -16,6 +16,7 @@ sys.path.append(current_dir)
 
 class TTSEngine(TTSInterface):
     def __init__(self):
+        super().__init__(stream=False)  # not yet implemented so set to false
         self.engine = pyttsx3.init()
         self.temp_audio_file = "temp"
         self.file_extension = "aiff"

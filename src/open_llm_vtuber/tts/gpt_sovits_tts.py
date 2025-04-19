@@ -21,6 +21,7 @@ class TTSEngine(TTSInterface):
         media_type: str = "wav",
         streaming_mode: str = "ture",
     ):
+        super().__init__(stream=False)  # not yet implemented so set to false
         self.api_url = api_url
         self.text_lang = text_lang
         self.ref_audio_path = ref_audio_path

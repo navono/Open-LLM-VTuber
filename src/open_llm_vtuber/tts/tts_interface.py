@@ -1,11 +1,35 @@
 import abc
 import os
 import asyncio
+from typing import AsyncGenerator
 
 from loguru import logger
 
 
 class TTSInterface(metaclass=abc.ABCMeta):
+    """
+    Abstract base class for TTS engines.
+    """
+
+    
+    def __init__(self, stream: bool = False):
+        # Set to True to let tts stream audio data. 
+        # this should be set by the user in your constructor 
+        # if streaming is supported by the tts engine.
+        self.stream = stream
+
+    @abc.abstractmethod
+    async def async_stream_audio(self, sentence_text: str) -> AsyncGenerator[bytes, None]:
+        """
+        Async generator to stream audio data from TTS for a given text. The audio data is streamed in chunks. The format can only be either wav or mp3 chunks.
+
+        Args:
+            sentence_text (str): The text to be converted to speech.
+        Yields:
+            bytes: The audio data chunks from TTS.
+        """
+        raise NotImplementedError
+
     async def async_generate_audio(self, text: str, file_name_no_ext=None) -> str:
         """
         Asynchronously generate speech audio file using TTS.

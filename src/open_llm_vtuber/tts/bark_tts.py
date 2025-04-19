@@ -13,6 +13,8 @@ sys.path.append(current_dir)
 
 class TTSEngine(TTSInterface):
     def __init__(self, voice="v2/en_speaker_1"):
+        super().__init__(stream=False)  # not yet implemented so set to false
+        
         if platform.system() == "Darwin":
             logger.info(">> Note: Running barkTTS on macOS can be very slow.")
             os.environ["SUNO_ENABLE_MPS"] = "True"

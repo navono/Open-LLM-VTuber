@@ -27,6 +27,7 @@ class TTSEngine(TTSInterface):
             language: Language code for multi-lingual models. Default is "en".
             device: Device to run model on ("cuda", "cpu", etc). If None, will auto-detect.
         """
+        super().__init__(stream=False)  # not yet implemented so set to false
         # Auto-detect device if not specified
         if device:
             self.device = device

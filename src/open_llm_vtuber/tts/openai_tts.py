@@ -38,6 +38,7 @@ class TTSEngine(TTSInterface):
             api_key (str, optional): API key for the TTS service. Defaults to "not-needed".
             base_url (str, optional): Base URL of the OpenAI-compatible TTS endpoint. Defaults to "http://localhost:8880/v1".
         """
+        super().__init__(stream=False)  # not yet implemented so set to false
         self.model = model
         self.voice = voice
         self.file_extension = file_extension.lower()  # Use configured extension
