@@ -1,3 +1,5 @@
+"""Prepares audio payload for sending to the client."""
+
 import base64
 from pydub import AudioSegment
 from pydub.utils import make_chunks
@@ -26,17 +28,19 @@ def _get_volume_by_chunks(audio: AudioSegment, chunk_length_ms: int) -> list:
 
 def prepare_audio_payload(
     audio_path: str | None,
+    sentence_index: int = 0,
     chunk_length_ms: int = 20,
     display_text: DisplayText = None,
     actions: Actions = None,
     forwarded: bool = False,
 ) -> dict[str, any]:
     """
-    Prepares the audio payload for sending to a broadcast endpoint.
+    Prepares the audio payload for sending to the client.
     If audio_path is None, returns a payload with audio=None for silent display.
 
     Parameters:
         audio_path (str | None): The path to the audio file to be processed, or None for silent display
+        sentence_index (int): The index of this audio (sentence) in the AI response
         chunk_length_ms (int): The length of each audio chunk in milliseconds
         display_text (DisplayText, optional): Text to be displayed with the audio
         actions (Actions, optional): Actions associated with the audio
@@ -52,6 +56,9 @@ def prepare_audio_payload(
         return {
             "type": "audio",
             "audio": None,
+            "sentence_index": sentence_index,
+            "sub_sentence_index": 0,
+            "end_of_sentence": True,
             "volumes": [],
             "slice_length": chunk_length_ms,
             "display_text": display_text,
@@ -72,6 +79,9 @@ def prepare_audio_payload(
     payload = {
         "type": "audio",
         "audio": audio_base64,
+        "sentence_index": sentence_index,
+        "sub_sentence_index": 0,
+        "end_of_sentence": True,
         "volumes": volumes,
         "slice_length": chunk_length_ms,
         "display_text": display_text,
