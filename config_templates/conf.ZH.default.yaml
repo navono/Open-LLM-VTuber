@@ -17,6 +17,9 @@ system_config:
     # live_prompt: 'live_prompt'
     # 当使用群聊时，此提示词将添加到每个 AI 参与者的记忆中。
     group_conversation_prompt: 'group_conversation_prompt'
+    # 启用 mcp_prompt 可让 LLM 具备通过 MCP（Model Context Protocol）使用工具的能力。
+    # 请注意：mcp_prompt 由 Agent 决定是否使用。
+    mcp_prompt: 'mcp_prompt'
 
 # 默认角色的配置
 character_config:
@@ -56,6 +59,9 @@ character_config:
         faster_first_response: True
         # 句子分割方法：'regex' 或 'pysbd'
         segment_method: 'pysbd'
+        # 是否使用 MCP（Model Context Protocol） Plus 以使 LLM 获得使用工具的能力（默认：False）
+        # 'Plus' 意味着它包含了通过 OpenAI API 调用工具的能力。
+        use_mcpp: False
 
       mem0_agent:
         vector_store:
@@ -104,12 +110,23 @@ character_config:
     llm_configs:
       # 一个配置池，用于不同代理中使用的所有无状态 llm 提供商的凭据和连接详细信息
 
+      # 无状态 LLM 模板 (对于非 ChatML 的 LLM, 通常而言不用管这个配置)
+      stateless_llm_with_template:
+        base_url: 'http://localhost:8080/v1'
+        llm_api_key: 'somethingelse'
+        organization_id: null
+        project_id: null
+        model: 'qwen2.5:latest'
+        template: 'CHATML'
+        temperature: 1.0 # value between 0 to 2
+        interrupt_method: 'user'
+
       # OpenAI 兼容推理后端
       openai_compatible_llm:
         base_url: 'http://localhost:11434/v1' # 基础 URL
         llm_api_key: 'somethingelse' # API 密钥
-        organization_id: 'org_eternity' # 组织 ID
-        project_id: 'project_glass' # 项目 ID
+        organization_id: null # 组织 ID
+        project_id: null # 项目 ID
         model: 'qwen2.5:latest' # 使用的模型
         temperature: 1.0 # 温度，介于 0 到 2 之间
         interrupt_method: 'user'

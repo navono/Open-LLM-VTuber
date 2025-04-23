@@ -15,6 +15,9 @@ system_config:
     # live_prompt: 'live_prompt'
     # When using group conversation, this prompt will be added to the memory of each AI participant.
     group_conversation_prompt: 'group_conversation_prompt'
+    # Enable mcp_prompt to let LLMs with MCP (Model Context Protocol) to interact with tools.
+    # Please note that Agent will decide whether to use this prompt or not.
+    mcp_prompt: 'mcp_prompt'
 
 # configuration for the default character
 character_config:
@@ -56,6 +59,9 @@ character_config:
         faster_first_response: True
         # Method for segmenting sentences: 'regex' or 'pysbd'
         segment_method: 'pysbd'
+        # Use MCP (Model Context Protocol) Plus to let the LLM have the ability to use tools
+        # 'Plus' means that it has the ability to call tools by using OpenAI API.
+        use_mcpp: True
 
       mem0_agent:
         vector_store:
@@ -106,12 +112,12 @@ character_config:
       # a configuration pool for the credentials and connection details for
       # all of the stateless llm providers that will be used in different agents
 
-      # Stateless LLM with Template
+      # Stateless LLM with Template (For Non-ChatML LLMs, usually not needed)
       stateless_llm_with_template:
         base_url: 'http://localhost:8080/v1'
         llm_api_key: 'somethingelse'
-        organization_id: 'org_eternity'
-        project_id: 'project_glass'
+        organization_id: null
+        project_id: null
         model: 'qwen2.5:latest'
         template: 'CHATML'
         temperature: 1.0 # value between 0 to 2
@@ -121,8 +127,8 @@ character_config:
       openai_compatible_llm:
         base_url: 'http://localhost:11434/v1'
         llm_api_key: 'somethingelse'
-        organization_id: 'org_eternity'
-        project_id: 'project_glass'
+        organization_id: null
+        project_id: null
         model: 'qwen2.5:latest'
         temperature: 1.0 # value between 0 to 2
         interrupt_method: 'user'
