@@ -4,7 +4,7 @@ Module for streaming audio payload processing.
 This module provides functionality to process asynchronous streams of audio chunks
 (MP3 or WAV) and yield json payloads ready to be sent to the client.
 
-Look at the `stream_audio_payload` function for the main functionality.
+Look at the `stream_audio_payload` function for the core functionality.
 """
 
 import os
@@ -213,30 +213,85 @@ def _robust_get_volume_by_chunks(
     return [(rms / max_rms) for rms in rms_values]
 
 
+def _detect_audio_format_and_wav_params(
+    buffer: bytes,
+) -> Tuple[str, Optional[int], Optional[int], Optional[int]]:
+    """
+    Detect audio format ('mp3' or 'wav') from initial buffer bytes and
+    parse WAV parameters if it's a WAV file.
+
+    Args:
+        buffer (bytes): Initial bytes from the audio stream
+
+    Returns:
+        Tuple:
+            format (str): 'mp3' or 'wav'
+            sample_rate (int | None): samples per second (Hz) for WAV, None for MP3
+            channels (int | None): number of audio channels for WAV, None for MP3
+            sample_width (int | None): bytes per sample for WAV, None for MP3
+    """
+    # First check for WAV format
+    if len(buffer) >= 44 and buffer[:4] == b"RIFF" and buffer[8:12] == b"WAVE":
+        # Locate 'fmt ' subchunk
+        fmt_offset = buffer.find(b"fmt ")
+        if fmt_offset != -1 and len(buffer) >= fmt_offset + 24:
+            try:
+                sample_rate = struct.unpack(
+                    "<I", buffer[fmt_offset + 12 : fmt_offset + 16]
+                )[0]
+                channels = struct.unpack(
+                    "<H", buffer[fmt_offset + 10 : fmt_offset + 12]
+                )[0]
+                bits_per_sample = struct.unpack(
+                    "<H", buffer[fmt_offset + 22 : fmt_offset + 24]
+                )[0]
+                sample_width = bits_per_sample // 8
+                logger.info(
+                    f"Detected WAV format: {sample_rate}Hz, {channels} channels, {bits_per_sample}-bit"
+                )
+                return "wav", sample_rate, channels, sample_width
+            except struct.error:
+                logger.warning("Error parsing WAV header, falling back to MP3")
+
+    # Check for MP3 format (look for sync word: 11 consecutive 1s)
+    # We're looking for 0xFF followed by at least 0xE0 (top 3 bits are 1)
+    for i in range(len(buffer) - 1):
+        if buffer[i] == 0xFF and (buffer[i + 1] & 0xE0) == 0xE0:
+            # Look further to see if we can find a valid MP3 frame
+            frame, _, _, _ = _parse_mp3_frame(memoryview(buffer[i:]))
+            if frame not in (None, b""):
+                logger.info("Detected MP3 format")
+                return "mp3", None, None, None
+
+    # If we can't be sure, default to MP3
+    logger.warning("Unable to detect format definitively, defaulting to MP3")
+    return "mp3", None, None, None
+
+
 async def stream_audio_payload(
     audio_stream_iterator: AsyncIterator[bytes],
-    audio_format: str,
-    sentence_index: int,
+    audio_format: Optional[str] = None,
+    sentence_index: int = 0,
     sample_rate: Optional[int] = None,
     channels: Optional[int] = None,
     sample_width: Optional[int] = None,
-    buffer_duration_ms: int = 1000,
+    buffer_duration_ms: int = 2000,
     chunk_length_ms: int = 20,
     display_text: Optional[DisplayText] = None,
     actions: Optional[Actions] = None,
     forwarded: bool = False,
-) -> AsyncGenerator[Dict[str, Any]]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Process an async iterator of MP3/WAV chunks, buffer into segments, compute volumes,
     and yield WAV-based payloads ready for WebSocket streaming.
 
     Args:
         audio_stream_iterator (AsyncIterator[bytes]): Source of raw audio bytes.
-        audio_format (str): 'mp3' or 'wav'.
+        audio_format (Optional[str]): 'mp3', 'wav', or None for auto-detection.
         sentence_index (int): Index of the sentence being processed.
-        sample_rate (Optional[int]): Required for WAV.
-        channels (Optional[int]): Required for WAV.
-        sample_width (Optional[int]): Bytes per sample for WAV.
+        sample_rate (Optional[int]): Required for WAV if not auto-detected.
+        channels (Optional[int]): Required for WAV if not auto-detected.
+        sample_width (Optional[int]): Bytes per sample for WAV if not auto-detected.
         buffer_duration_ms (int): Buffer duration in ms for each segment.
         chunk_length_ms (int): Duration in ms for volume analysis. It's 20ms.
         display_text (Optional[DisplayText]): Static display text. It's only included in the first payload of the sentence.
@@ -246,18 +301,63 @@ async def stream_audio_payload(
     Yields:
         Dict[str, Any]: Payload dict containing audio, volumes, metadata.
     """
+    print(f"Sentence Index: {sentence_index}")
+    # Auto-detect format and WAV parameters if needed
+    if audio_format is None or (
+        audio_format == "wav" and not all([sample_rate, channels, sample_width])
+    ):
+        init_buf = bytearray()
+        detection_chunks = []
+
+        # Collect enough bytes for format detection (at least 44 bytes for WAV header)
+        while len(init_buf) < 128:  # Collect a bit more to be safe
+            try:
+                chunk = await anext(audio_stream_iterator)
+                if not isinstance(chunk, (bytes, bytearray)):
+                    logger.warning(f"Skipping non-bytes chunk: {type(chunk)}")
+                    continue
+                detection_chunks.append(chunk)
+                init_buf.extend(chunk)
+                if len(init_buf) >= 128:
+                    break
+            except StopAsyncIteration:
+                break
+
+        if len(init_buf) == 0:
+            logger.error("Stream is empty, cannot detect format")
+            yield {"type": "error", "message": "Empty audio stream"}
+            return
+
+        detected_format, detected_sr, detected_ch, detected_sw = (
+            _detect_audio_format_and_wav_params(bytes(init_buf))
+        )
+
+        # Use detected values if not explicitly specified
+        audio_format = detected_format
+        if audio_format == "wav":
+            sample_rate = sample_rate or detected_sr
+            channels = channels or detected_ch
+            sample_width = sample_width or detected_sw
+
     if audio_format not in ("mp3", "wav"):
         logger.error(f"TTS stream: Unsupported audio format: {audio_format}")
         yield {"type": "error", "message": f"Unsupported format: {audio_format}"}
         return
+
     if audio_format == "wav" and not all([sample_rate, channels, sample_width]):
         logger.error(
-            "TTS stream: Missing WAV parameters: sample_rate, channels, sample_width"
+            "TTS stream: Could not determine WAV parameters: sample_rate, channels, sample_width"
         )
         yield {"type": "error", "message": "Missing WAV parameters"}
         return
 
     input_buffer = bytearray()
+
+    # If we've collected detection chunks, add them to the input buffer
+    if "detection_chunks" in locals() and detection_chunks:
+        for chunk in detection_chunks:
+            input_buffer.extend(chunk)
+
     mp3_frame_buffer: Deque[Tuple[bytes, float]] = deque()
     buffered_duration_ms = 0.0
     first_mp3_rate: Optional[int] = None
@@ -463,6 +563,10 @@ async def stream_audio_payload(
         yield {"type": "error", "message": f"Fatal error: {e}"}
     finally:
         logger.info("Audio stream processing finished.")
+
+
+## ============ Testing code below ============ ##
+# For testing purposes only
 
 
 async def dummy_audio_iterator(

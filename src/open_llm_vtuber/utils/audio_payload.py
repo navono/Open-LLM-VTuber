@@ -27,8 +27,8 @@ def _get_volume_by_chunks(audio: AudioSegment, chunk_length_ms: int) -> list:
 
 
 def prepare_audio_payload(
+    sentence_index: int,
     audio_path: str | None,
-    sentence_index: int = 0,
     chunk_length_ms: int = 20,
     display_text: DisplayText = None,
     actions: Actions = None,

@@ -1,4 +1,3 @@
-import asyncio
 import re
 from typing import Optional, Union, Any, List, Dict
 import numpy as np
@@ -11,9 +10,8 @@ from .tts_manager import TTSTaskManager
 from ..agent.output_types import SentenceOutput, AudioOutput
 from ..agent.input_types import BatchInput, TextData, ImageData, TextSource, ImageSource
 from ..asr.asr_interface import ASRInterface
-from ..live2d_model import Live2dModel
 from ..tts.tts_interface import TTSInterface
-from ..utils.stream_audio import prepare_audio_payload
+from ..utils.audio_payload import prepare_audio_payload
 
 
 # Convert class methods to standalone functions
@@ -43,7 +41,6 @@ def create_batch_input(
 async def process_agent_output(
     output: Union[AudioOutput, SentenceOutput],
     character_config: Any,
-    live2d_model: Live2dModel,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
@@ -58,7 +55,6 @@ async def process_agent_output(
         if isinstance(output, SentenceOutput):
             full_response = await handle_sentence_output(
                 output,
-                live2d_model,
                 tts_engine,
                 websocket_send,
                 tts_manager,
@@ -81,13 +77,31 @@ async def process_agent_output(
 
 async def handle_sentence_output(
     output: SentenceOutput,
-    live2d_model: Live2dModel,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
     translate_engine: Optional[Any] = None,
 ) -> str:
-    """Handle sentence output type with optional translation support"""
+    """
+    Get a sentence output from the Agent, translate it if needed, prepare payloads,
+    and send the payloads to the client. Return the display text.
+
+    This function gets a sentence output from the Agent, translates it if
+    translate_engine is provided, uses the TTS manager to speak, prepare
+    payloads, and send it via websocket.
+
+    It also handles any actions associated with the output.
+    Args:
+        output (SentenceOutput): The sentence output from the Agent.
+        tts_engine (TTSInterface): The TTS engine to use for speech synthesis.
+        websocket_send (WebSocketSend): Function to send messages over WebSocket.
+        tts_manager (TTSTaskManager): The TTS task manager for handling TTS tasks.
+        translate_engine (Optional[Any]): Optional translation engine.
+    Returns:
+        str: The full response text (for display) after all the processing.
+    Raises:
+        Exception: If there is an error during processing.
+    """
     full_response = ""
     async for display_text, tts_text, actions in output:
         logger.debug(f"🏃 Processing output: '''{tts_text}'''...")
@@ -104,7 +118,6 @@ async def handle_sentence_output(
             tts_text=tts_text,
             display_text=display_text,
             actions=actions,
-            live2d_model=live2d_model,
             tts_engine=tts_engine,
             websocket_send=websocket_send,
         )
@@ -164,8 +177,7 @@ async def finalize_conversation_turn(
     broadcast_ctx: Optional[BroadcastContext] = None,
 ) -> None:
     """Finalize a conversation turn"""
-    if tts_manager.task_list:
-        await asyncio.gather(*tts_manager.task_list)
+    if await tts_manager.wait_for_completion():
         await websocket_send(json.dumps({"type": "backend-synth-complete"}))
 
         response = await message_handler.wait_for_response(
@@ -210,9 +222,9 @@ async def send_conversation_end_signal(
     logger.info(f"😎👍✅ Conversation Chain {session_emoji} completed!")
 
 
-def cleanup_conversation(tts_manager: TTSTaskManager, session_emoji: str) -> None:
+async def cleanup_conversation(tts_manager: TTSTaskManager, session_emoji: str) -> None:
     """Clean up conversation resources"""
-    tts_manager.clear()
+    await tts_manager.clear()
     logger.debug(f"🧹 Clearing up conversation {session_emoji}.")
 
 

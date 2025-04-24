@@ -82,8 +82,7 @@ async def process_single_conversation(
         )
 
         # Wait for any pending TTS tasks
-        if tts_manager.task_list:
-            await asyncio.gather(*tts_manager.task_list)
+        if await tts_manager.wait_for_completion():
             await websocket_send(json.dumps({"type": "backend-synth-complete"}))
 
         await finalize_conversation_turn(
@@ -115,7 +114,7 @@ async def process_single_conversation(
         )
         raise
     finally:
-        cleanup_conversation(tts_manager, session_emoji)
+        await cleanup_conversation(tts_manager, session_emoji)
 
 
 async def process_agent_response(
@@ -142,7 +141,6 @@ async def process_agent_response(
             response_part = await process_agent_output(
                 output=output,
                 character_config=context.character_config,
-                live2d_model=context.live2d_model,
                 tts_engine=context.tts_engine,
                 websocket_send=websocket_send,
                 tts_manager=tts_manager,

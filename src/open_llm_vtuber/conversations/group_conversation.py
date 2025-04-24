@@ -129,7 +129,7 @@ async def process_group_conversation(
     finally:
         # Cleanup all TTS managers
         for uid, tts_manager in tts_managers.items():
-            cleanup_conversation(tts_manager, session_emoji)
+            await cleanup_conversation(tts_manager, session_emoji)
         # Clean up
         GroupConversationState.remove_state(state.group_id)
 
@@ -242,8 +242,7 @@ async def handle_group_member_turn(
         tts_manager=tts_manager,
     )
 
-    if tts_manager.task_list:
-        await asyncio.gather(*tts_manager.task_list)
+    if await tts_manager.wait_for_completion():
         await current_ws_send(json.dumps({"type": "backend-synth-complete"}))
 
         broadcast_ctx = BroadcastContext(
@@ -327,7 +326,6 @@ async def process_member_response(
             response_part = await process_agent_output(
                 output=output,
                 character_config=context.character_config,
-                live2d_model=context.live2d_model,
                 tts_engine=context.tts_engine,
                 websocket_send=current_ws_send,
                 tts_manager=tts_manager,

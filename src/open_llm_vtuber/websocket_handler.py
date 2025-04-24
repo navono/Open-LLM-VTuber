@@ -14,7 +14,7 @@ from .chat_group import (
     broadcast_to_group,
 )
 from .message_handler import message_handler
-from .utils.stream_audio import prepare_audio_payload
+from .utils.audio_payload import prepare_audio_payload
 from .chat_history_manager import (
     create_new_history,
     get_history,
@@ -539,6 +539,7 @@ class WebSocketHandler:
             display_text = data.get("display_text")
             if display_text:
                 silent_payload = prepare_audio_payload(
+                    sentence_index=0,  # I'm not sure what this should be.
                     audio_path=None,
                     display_text=display_text,
                     actions=None,
