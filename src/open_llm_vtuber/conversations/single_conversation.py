@@ -1,8 +1,9 @@
-from typing import Union, List, Dict, Any, Optional
-import asyncio
 import json
-from loguru import logger
+import asyncio
+from typing import Union, List, Dict, Any, Optional
+
 import numpy as np
+from loguru import logger
 
 from .conversation_utils import (
     create_batch_input,
@@ -41,7 +42,7 @@ async def process_single_conversation(
         str: Complete response text
     """
     # Create TTSTaskManager for this conversation
-    tts_manager = TTSTaskManager()
+    tts_manager = TTSTaskManager(websocket_send=websocket_send)
 
     try:
         # Send initial signals
@@ -135,18 +136,23 @@ async def process_agent_response(
         str: The complete response text
     """
     full_response = ""
+    sentence_index = 0
     try:
         agent_output = context.agent_engine.chat(batch_input)
         async for output in agent_output:
             response_part = await process_agent_output(
                 output=output,
+                sentence_index=sentence_index,
                 character_config=context.character_config,
                 tts_engine=context.tts_engine,
                 websocket_send=websocket_send,
                 tts_manager=tts_manager,
                 translate_engine=context.translate_engine,
             )
+            sentence_index += 1
             full_response += response_part
+
+        await tts_manager.end_response(sentence_index=sentence_index)
 
     except Exception as e:
         logger.error(f"Error processing agent response: {e}")

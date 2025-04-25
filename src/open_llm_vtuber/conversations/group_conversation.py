@@ -47,7 +47,10 @@ async def process_group_conversation(
         session_emoji: Emoji identifier for the conversation
     """
     # Create TTSTaskManager for each member
-    tts_managers = {uid: TTSTaskManager() for uid in group_members}
+    tts_managers = {
+        uid: TTSTaskManager(websocket_send=client_connections[uid].send_text)
+        for uid in group_members
+    }
 
     try:
         logger.info(f"Group Conversation Chain {session_emoji} started!")
@@ -322,16 +325,22 @@ async def process_member_response(
     try:
         agent_output = context.agent_engine.chat(batch_input)
 
+        sentence_index = 0
+
         async for output in agent_output:
             response_part = await process_agent_output(
                 output=output,
+                sentence_index=sentence_index,
                 character_config=context.character_config,
                 tts_engine=context.tts_engine,
                 websocket_send=current_ws_send,
                 tts_manager=tts_manager,
                 translate_engine=context.translate_engine,
             )
+            sentence_index += 1
             full_response += response_part
+
+        await tts_manager.end_response(sentence_index=sentence_index)
 
     except Exception as e:
         logger.error(f"Error processing member response: {e}")

@@ -17,19 +17,42 @@ from .types import WebSocketSend
 
 class TTSTaskManager:
     """
-    Manages TTS tasks with controlled concurrency and sends results immediately upon completion.
+    Manages Text-to-Speech (TTS) generation, payload preparation, and delivery tasks.
 
-    Allows a maximum number of TTS generation tasks to run concurrently.
-    Results are sent via WebSocket as soon as they are ready, potentially out of order
-    compared to when they were requested.
+    This class handles the lifecycle of TTS generation for a single AI response,
+    controlling concurrency and managing the sending of audio payloads (either
+    as complete files or streamed chunks) via a WebSocket connection.
+
+    A single instance of `TTSTaskManager` is intended to manage one complete
+    response from the AI, identified by a unique `response_uid`. Each sentence
+    within the response is processed individually. If streaming is enabled,
+    audio chunks for each sentence are sent as sub-sentence payloads.
+
+    Concurrency is managed using an `asyncio.Semaphore` to limit the number of
+    simultaneous TTS generation tasks.
+
+    Attributes:
+        websocket_send (WebSocketSend): The function used to send data over the WebSocket.
+        max_concurrent_tasks (int): Maximum number of concurrent TTS tasks allowed.
+        response_uid (Optional[str]): Unique identifier for the current AI response.
+                                      Generated when the first sentence is processed.
     """
 
-    def __init__(self, max_concurrent_tasks: int = 2) -> None:
+    def __init__(
+        self, websocket_send: WebSocketSend, max_concurrent_tasks: int = 2
+    ) -> None:
         """
         Initializes the TTSTaskManager.
 
         Args:
-            max_concurrent_tasks: The maximum number of TTS generation tasks allowed to run simultaneously.
+            websocket_send: A callable function responsible for sending data
+                            through the WebSocket connection.
+            max_concurrent_tasks: The maximum number of TTS generation tasks
+                                  allowed to run simultaneously. Must be positive.
+
+        Raises:
+            ValueError: If `max_concurrent_tasks` is not positive.
+            TypeError: If `websocket_send` is not a callable.
         """
         if max_concurrent_tasks <= 0:
             raise ValueError("max_concurrent_tasks must be positive")
@@ -38,26 +61,59 @@ class TTSTaskManager:
         )
         self._semaphore = asyncio.Semaphore(max_concurrent_tasks)
         self._active_tasks: set[asyncio.Task] = set()
-        self._sentence_counter = 0
+        self.websocket_send = websocket_send
+
+        if not websocket_send:
+            logger.critical(
+                f"websocket_send must be a callable of type WebSocketSend, got {type(websocket_send)}"
+            )
+            raise TypeError(
+                f"websocket_send must be a callable of type WebSocketSend, got {type(websocket_send)}"
+            )
+
+        # will be set when the response is started
+        self.response_uid = None  # iso 8601 + uuid4
+        logger.info("DONE")
 
     async def speak(
         self,
+        sentence_index: int,
         tts_text: str,
         display_text: DisplayText,
         actions: Optional[Actions],
         tts_engine: TTSInterface,
-        websocket_send: WebSocketSend,
     ) -> None:
         """
-        Queues a task to synthesize text and send it via WebSocket immediately upon completion.
+        Queues a task to synthesize text and send the resulting audio via WebSocket.
 
-        The number of concurrent TTS generations is limited by `self.max_concurrent_tasks`.
+        If `tts_text` is effectively empty after removing whitespace and punctuation,
+        a silent payload is sent immediately. Otherwise, a TTS generation task is
+        created and managed by the semaphore. The audio payload (streamed or complete)
+        is sent as soon as it's ready.
+
+        This method automatically calls `start_response` if it hasn't been called yet
+        for the current response.
+
+        Args:
+            sentence_index: The zero-based index of the sentence within the response.
+            tts_text: The text content to be synthesized.
+            display_text: Information about how the text should be displayed.
+            actions: Optional actions associated with this sentence.
+            tts_engine: The TTS engine instance to use for synthesis.
         """
+
+        if not self.response_uid:
+            await self.start_response()
+
         if len(re.sub(r'[\s.,!?，。！？\'"』」）】\s]+', "", tts_text)) == 0:
             logger.debug(
                 f"Empty TTS text from {display_text.name}, sending silent payload directly."
             )
-            await self._send_silent_payload(display_text, actions, websocket_send)
+            await self._send_silent_payload(
+                sentence_index=sentence_index,
+                display_text=display_text,
+                actions=actions,
+            )
             return
 
         logger.debug(
@@ -65,11 +121,11 @@ class TTSTaskManager:
         )
 
         tts_task = self._process_and_send_tts(
+            sentence_index=sentence_index,
             tts_text=tts_text,
             display_text=display_text,
             actions=actions,
             tts_engine=tts_engine,
-            websocket_send=websocket_send,
         )
         task = asyncio.create_task(
             tts_task, name=f"TTS_{display_text.name}_{str(uuid.uuid4())[:8]}"
@@ -80,42 +136,61 @@ class TTSTaskManager:
 
     async def _send_silent_payload(
         self,
+        sentence_index: int,
         display_text: DisplayText,
         actions: Optional[Actions],
-        websocket_send: WebSocketSend,
     ) -> None:
         """
-        Creates and sends a silent payload when there's no text to speak.
-        The sentence index is incremented to maintain order.
+        Creates and sends a silent audio payload via WebSocket.
+
+        Used when the input text for TTS is empty or effectively silent.
 
         Args:
-            display_text: The display text information
-            actions: Optional actions to include with the payload
-            websocket_send: Function to send the payload
+            sentence_index: The index of the sentence this silent payload corresponds to.
+            display_text: The display text information.
+            actions: Optional actions to include with the payload.
         """
         try:
             payload = prepare_audio_payload(
-                sentence_index=self._sentence_counter,
+                response_uid=self.response_uid,
+                sentence_index=sentence_index,
                 audio_path=None,
                 display_text=display_text,
                 actions=actions,
             )
-            self._sentence_counter += 1
-            await websocket_send(json.dumps(payload))
+            await self.websocket_send(json.dumps(payload))
             logger.debug(f"Sent silent payload for {display_text.name}.")
         except Exception as e:
             logger.error(f"Error sending silent payload for {display_text.name}: {e}")
 
     async def _process_and_send_tts(
         self,
+        sentence_index: int,
         tts_text: str,
         display_text: DisplayText,
         actions: Optional[Actions],
         tts_engine: TTSInterface,
-        websocket_send: WebSocketSend,
     ) -> None:
         """
-        Processes TTS generation within semaphore limits and sends the result.
+        Generates TTS audio and sends it via WebSocket, respecting concurrency limits.
+
+        Acquires the semaphore before proceeding with TTS generation. If the
+        `tts_engine` supports streaming, it streams audio chunks. Otherwise, it
+        generates a complete audio file and sends it. Handles potential errors
+        during generation or sending, attempting to send a silent fallback payload
+        on failure. Ensures temporary audio files are cleaned up.
+
+        Args:
+            sentence_index: The index of the sentence being processed.
+            tts_text: The text to synthesize.
+            display_text: Display information associated with the text.
+            actions: Optional actions associated with the text.
+            tts_engine: The TTS engine instance.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled externally.
+            Exception: Catches and logs other exceptions during processing,
+                       attempting to send a silent payload as fallback.
         """
         audio_file_path: Optional[str] = None
         task_name = asyncio.current_task().get_name()
@@ -132,13 +207,14 @@ class TTSTaskManager:
                         f"Task {task_name} sending streaming payload for {display_text.name}, tts_text: {tts_text}"
                     )
                     async for audio_payload in stream_audio_payload(
-                        sentence_index=self._sentence_counter,
                         audio_stream_iterator=audio_chunk_generator,
+                        response_uid=self.response_uid,
+                        sentence_index=sentence_index,
                         display_text=display_text,
                         actions=actions,
                         forwarded=False,
                     ):
-                        await websocket_send(json.dumps(audio_payload))
+                        await self.websocket_send(json.dumps(audio_payload))
                         logger.debug(
                             f"✅ Task {task_name} successfully sent streaming payload."
                         )
@@ -150,18 +226,19 @@ class TTSTaskManager:
                     logger.debug(
                         f"Task {task_name} acquired semaphore. Processing TTS for '''{tts_text}'''..."
                     )
-                    audio_file_path = await self._generate_audio(tts_engine, tts_text)
+                    audio_file_path = await self._generate_audio_file(
+                        tts_engine, tts_text
+                    )
                     payload = prepare_audio_payload(
-                        sentence_index=self._sentence_counter,
+                        sentence_index=sentence_index,
                         audio_path=audio_file_path,
                         display_text=display_text,
                         actions=actions,
                     )
-                    self._sentence_counter += 1
                     logger.debug(
                         f"Task {task_name} sending payload for {display_text.name}..."
                     )
-                    await websocket_send(json.dumps(payload))
+                    await self.websocket_send(json.dumps(payload))
                     logger.info(
                         f"✅ Task {task_name} successfully sent payload for '{display_text.text}' by {display_text.name}."
                     )
@@ -177,9 +254,9 @@ class TTSTaskManager:
                     f"Task {task_name} sending silent fallback payload for '{display_text.text}'."
                 )
                 await self._send_silent_payload(
+                    sentence_index=sentence_index,
                     display_text=display_text,
                     actions=actions,
-                    websocket_send=websocket_send,
                 )
                 logger.info(
                     f"Task {task_name} sent silent fallback payload for '{display_text.text}'."
@@ -200,8 +277,22 @@ class TTSTaskManager:
                         f"Task {task_name} failed to clean up audio file {audio_file_path}: {cleanup_err}"
                     )
 
-    async def _generate_audio(self, tts_engine: TTSInterface, text: str) -> str:
-        """Generate audio file from text."""
+    async def _generate_audio_file(self, tts_engine: TTSInterface, text: str) -> str:
+        """
+        Generates a complete audio file from text using the provided TTS engine.
+
+        This method is used when the TTS engine does not support streaming.
+
+        Args:
+            tts_engine: The TTS engine instance.
+            text: The text to synthesize.
+
+        Returns:
+            The file path to the generated audio file.
+
+        Raises:
+            Exception: Propagates exceptions raised by the TTS engine during generation.
+        """
         logger.debug(f"🏃 Generating audio for '''{text}'''...")
         file_name = (
             f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
@@ -216,16 +307,72 @@ class TTSTaskManager:
             logger.error(f"TTS engine failed to generate audio for '{text}': {e}")
             raise
 
+    async def start_response(self) -> str:
+        """
+        Initializes a new response sequence and sends a start control message.
+
+        Generates a unique `response_uid` for the response, stores it in the
+        instance, and sends a 'start-of-response' control message via WebSocket.
+        This is typically called automatically by the first `speak` call for a
+        new response.
+
+        Returns:
+            The generated unique response UID.
+        """
+        response_uid = f"{datetime.now().isoformat()}_{str(uuid.uuid4())[:8]}"
+        logger.info(f"Response start. UID set to {response_uid}")
+        await self.websocket_send(
+            json.dumps(
+                {
+                    "type": "control",
+                    "text": "start-of-response",
+                    "response_id": response_uid,
+                }
+            )
+        )
+        self.response_uid = response_uid
+        return self.response_uid
+
+    async def end_response(self, sentence_index: int) -> None:
+        """
+        Sends an end-of-response control message via WebSocket.
+
+        Indicates that all sentences for the current `response_uid` have been processed.
+
+        Args:
+            sentence_index: The index intended for the *next* sentence, effectively
+                            indicating the total number of sentences processed (0-based index + 1).
+        """
+        await self.websocket_send(
+            json.dumps(
+                {
+                    "type": "control",
+                    "text": "end-of-response",
+                    "response_id": self.response_uid,
+                    "sentence_index": sentence_index,
+                }
+            )
+        )
+        logger.info("End of response sent.")
+        logger.info(f"Response UID is {self.response_uid}")
+
     async def clear(self) -> None:
         """
-        Cancel all active TTS tasks and clear the internal state.
+        Cancels all active TTS tasks and resets the manager's state for a new response.
+
+        Iterates through all currently running TTS tasks managed by this instance,
+        requests their cancellation, and waits for them to finish cancelling.
+        Clears the internal set of active tasks. This should be called when a
+        response is definitively finished or interrupted to clean up resources.
         """
+
         logger.info(
             f"Clearing TTSTaskManager. Cancelling {len(self._active_tasks)} active tasks."
         )
         tasks_to_cancel = list(self._active_tasks)
         if not tasks_to_cancel:
-            logger.info("No active tasks to cancel.")
+            logger.info("No active tasks to cancel. Great!")
+            logger.info("TTSTaskManager cleared.")
             return
         for task in tasks_to_cancel:
             task.cancel()
@@ -244,12 +391,16 @@ class TTSTaskManager:
 
     async def wait_for_completion(self) -> bool:
         """
-        Waits until all currently active tasks have completed.
-        This method will block until all tasks are done or until the tasks are cancelled.
-        If there are no active tasks, it will return false immediately.
+        Waits until all currently managed TTS tasks have completed.
+
+        Blocks execution until all tasks in the `_active_tasks` set finish.
+        Useful for ensuring all audio generation and sending is complete before
+        proceeding with subsequent actions related to the response.
 
         Returns:
-            bool: True if all tasks completed, False if no tasks were active or if some tasks are still pending for whatever reason.
+            True if all tasks completed successfully, False if there were no tasks
+            to wait for or if any tasks remained pending after waiting (which
+            might indicate an issue or timeout, though timeout is not explicitly handled here).
         """
         if not self._active_tasks:
             logger.info("No active tasks to wait for.")

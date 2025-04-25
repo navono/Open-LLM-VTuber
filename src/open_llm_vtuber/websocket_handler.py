@@ -1,10 +1,11 @@
-from typing import Dict, List, Optional, Callable, TypedDict
-from fastapi import WebSocket, WebSocketDisconnect
-import asyncio
 import json
+import asyncio
 from enum import Enum
+from typing import Dict, List, Optional, Callable, TypedDict
+
 import numpy as np
 from loguru import logger
+from fastapi import WebSocket, WebSocketDisconnect
 
 from .service_context import ServiceContext
 from .chat_group import (
@@ -532,14 +533,17 @@ class WebSocketHandler:
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
         """
-        Handle audio playback start notification
+        Handle audio playback start notification.
+        This is used to notify other group members about the start of audio playback.
+        If the client is part of a group, it will send a silent payload to other members,
+        so that the user can know what other members are saying.
         """
         group_members = self.chat_group_manager.get_group_members(client_uid)
         if len(group_members) > 1:
             display_text = data.get("display_text")
             if display_text:
                 silent_payload = prepare_audio_payload(
-                    sentence_index=0,  # I'm not sure what this should be.
+                    sentence_index=0,
                     audio_path=None,
                     display_text=display_text,
                     actions=None,

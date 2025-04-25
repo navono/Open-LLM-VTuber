@@ -1,7 +1,10 @@
 import re
-from typing import Optional, Union, Any, List, Dict
-import numpy as np
 import json
+import uuid
+from datetime import datetime
+from typing import Optional, Union, Any, List, Dict
+
+import numpy as np
 from loguru import logger
 
 from ..message_handler import message_handler
@@ -40,6 +43,7 @@ def create_batch_input(
 
 async def process_agent_output(
     output: Union[AudioOutput, SentenceOutput],
+    sentence_index: int,
     character_config: Any,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
@@ -54,11 +58,11 @@ async def process_agent_output(
     try:
         if isinstance(output, SentenceOutput):
             full_response = await handle_sentence_output(
-                output,
-                tts_engine,
-                websocket_send,
-                tts_manager,
-                translate_engine,
+                sentence_index=sentence_index,  # Pass sentence_index first
+                output=output,
+                tts_engine=tts_engine,
+                tts_manager=tts_manager,
+                translate_engine=translate_engine,
             )
         elif isinstance(output, AudioOutput):
             full_response = await handle_audio_output(output, websocket_send)
@@ -76,9 +80,9 @@ async def process_agent_output(
 
 
 async def handle_sentence_output(
+    sentence_index: int,
     output: SentenceOutput,
     tts_engine: TTSInterface,
-    websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
     translate_engine: Optional[Any] = None,
 ) -> str:
@@ -92,9 +96,9 @@ async def handle_sentence_output(
 
     It also handles any actions associated with the output.
     Args:
+        sentence_index (int): The index of the sentence in the response.
         output (SentenceOutput): The sentence output from the Agent.
         tts_engine (TTSInterface): The TTS engine to use for speech synthesis.
-        websocket_send (WebSocketSend): Function to send messages over WebSocket.
         tts_manager (TTSTaskManager): The TTS task manager for handling TTS tasks.
         translate_engine (Optional[Any]): Optional translation engine.
     Returns:
@@ -115,11 +119,11 @@ async def handle_sentence_output(
 
         full_response += display_text.text
         await tts_manager.speak(
+            sentence_index=sentence_index,
             tts_text=tts_text,
             display_text=display_text,
             actions=actions,
             tts_engine=tts_engine,
-            websocket_send=websocket_send,
         )
     return full_response
 
@@ -130,14 +134,40 @@ async def handle_audio_output(
 ) -> str:
     """Process and send AudioOutput directly to the client"""
     full_response = ""
+
+    response_uid = f"{datetime.now().isoformat()}_{str(uuid.uuid4())[:8]}"
+
+    await websocket_send(
+        json.dumps(
+            {
+                "type": "control",
+                "text": "start-of-response",
+                "response_id": response_uid,
+            }
+        )
+    )
+
     async for audio_path, display_text, transcript, actions in output:
         full_response += transcript
         audio_payload = prepare_audio_payload(
+            response_uid=response_uid,
+            sentence_index=0,
             audio_path=audio_path,
             display_text=display_text,
             actions=actions.to_dict() if actions else None,
         )
         await websocket_send(json.dumps(audio_payload))
+
+    await websocket_send(
+        json.dumps(
+            {
+                "type": "control",
+                "text": "end-of-response",
+                "response_id": response_uid,
+            }
+        )
+    )
+
     return full_response
 
 
