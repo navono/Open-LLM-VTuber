@@ -20,6 +20,10 @@ system_config:
     # 启用 mcp_prompt 可让 LLM 具备通过 MCP（Model Context Protocol）使用工具的能力。
     # 请注意：mcp_prompt 由 Agent 决定是否使用。
     mcp_prompt: 'mcp_prompt'
+    # 当AI被要求主动说话时使用的提示词
+    proactive_speak_prompt: 'proactive_speak_prompt'
+    # 用来增强LLM输出可发音文本的提示词
+    # speakable_prompt: 'speakable_prompt'
 
 # 默认角色的配置
 character_config:
@@ -32,7 +36,6 @@ character_config:
 
   # ============== 提示词 ==============
 
-  # 角色设定选项已弃用
   # 只需在下面输入你想使用的人格提示。
   # 如果你想创建多个角色并在它们之间切换，请在 characters 文件夹中添加角色
   persona_prompt: |
@@ -200,10 +203,11 @@ character_config:
 
     # Faster Whisper 配置
     faster_whisper:
-      model_path: 'distil-medium.en' # 模型路径，distil-medium.en 是一个仅限英语的模型；如果你有好的 GPU，可以使用 distil-large-v3
+      model_path: 'large-v3-turbo' # 模型路径，模型名称，或 hf hub 的模型 id
       download_root: 'models/whisper' # 模型下载根目录
-      language: 'en' # 语言，en、zh 或其他。留空表示自动检测。
+      language: 'zh' # 语言，en、zh 或其他。留空表示自动检测。
       device: 'auto' # 设备，cpu、cuda 或 auto。faster-whisper 不支持 mps
+      compute_type: 'int8'
 
     whisper_cpp:
       # 所有可用模型都列在 https://abdeladim-s.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
@@ -219,7 +223,7 @@ character_config:
       device: 'cpu' # 设备
 
     # FunASR 目前需要在启动时连接互联网以下载/检查模型。您可以在初始化后断开互联网连接。
-    # 或者您可以使用 Faster-Whisper 获得完全离线的体验
+    # 或者您可以使用 sherpa onnx asr 或 Faster-Whisper 获得完全离线的体验
     fun_asr:
       model_name: 'iic/SenseVoiceSmall' # 或 'paraformer-zh'
       vad_model: 'fsmn-vad' # 仅当音频长度超过 30 秒时才需要使用

@@ -1,8 +1,4 @@
-"""As there are many different servers and tools,
-we need to construct the prompt for each server and its tools.
-Plus, we need to format the tools information to a more generic structure
-for OpenAI API to them by using the MCPClient.
-"""
+"""Constructs prompts for servers and tools, formats tool information for OpenAI API."""
 
 import json
 import os.path
@@ -29,10 +25,7 @@ DEFAULT_FILES_PATH = {
 
 
 class MixedConstructor:
-    """Construct prompts for MCP servers and tools.
-    Also constructs the tools information to a standard structure.
-    This class is responsible for managing the prompts and tools information.
-    """
+    """Manages prompts for MCP servers and standardizes tool information."""
 
     def __init__(
         self,
@@ -40,16 +33,7 @@ class MixedConstructor:
         server_manager: Optional[MCPServerManager] = None,
         tool_manager: Optional[ToolManager] = None,
     ) -> None:
-        """Initialize the Prompt Constructor.
-
-        Args:
-            prompt_paths (Dict[str, str | Path]): Paths to the prompt files.
-                The keys are 'servers_prompt' and 'formatted_tools'.
-                The values are the paths to the respective files.
-            server_manager (Optional[MCPServerManager]): The server manager to use for managing servers.
-                If None, a default MCPServerManager will be created.
-                Default is None.
-        """
+        """Initialize with paths to prompt files and managers."""
         self.servers_prompt = validate_file(
             prompt_paths.get("servers_prompt", DEFAULT_SERVERS_PROMPT_PATH)
         )
@@ -63,31 +47,13 @@ class MixedConstructor:
             prompt_paths.get("formatted_tools", DEFAULT_FORMATTED_TOOLS_PATH)
         )
 
-        # Structure of self.servers_info:
-        # {
-        #     "MCP Server Name": {
-        #         "Tool 1": {
-        #             "description": "Description of Tool 1",
-        #             "parameters": {
-        #                 "param1": {
-        #                     "type": "string",
-        #                     "description": "Description of param1",
-        #                 },
-        #                 "param2": {
-        #                     "type": "integer",
-        #                     "description": "Description of param2",
-        #                 },
-        #             },
-        #             "required": ["param1", "param2"],
-        #         }
-        #     }
-        # }
+        # Structure: server name -> tool name -> tool details (description, parameters, required)
         self.servers_info: Dict[str, Dict[str, str]] = {}
 
         self._preprocess_prompts()
 
     def _preprocess_prompts(self) -> None:
-        """Preprocess the prompts to standard data structure."""
+        """Convert prompt data to MCPServerPrompt objects."""
         for server_name, prompt in self.prompts.items():
             if isinstance(prompt, dict):
                 content = prompt.get("content", None)
@@ -99,13 +65,10 @@ class MixedConstructor:
                     )
                     continue
 
-            logger.warning(
-                f"MC: Invalid prompt format for server '{server_name}'. "
-                "Expected a dictionary with 'content' and 'mtime' keys."
-            )
+            logger.warning(f"MC: Invalid prompt format for server '{server_name}'")
 
     def _reformat_prompts_to_dict(self) -> None:
-        """Reformat the prompts to a dictionary."""
+        """Convert MCPServerPrompt objects to dictionaries."""
         for server_name, prompt in self.prompts.items():
             if isinstance(prompt, MCPServerPrompt):
                 self.prompts[server_name] = {
@@ -114,78 +77,71 @@ class MixedConstructor:
                 }
                 continue
 
-            logger.warning(
-                f"MC: Invalid prompt format for server '{server_name}'. "
-                "Expected an instance of MCPServerPrompt."
-            )
+            logger.warning(f"MC: Invalid prompt format for server '{server_name}'")
 
     def _reformat_tools_to_dict(self) -> None:
-        """Reformat the tools to a dictionary."""
+        """Convert FormattedTool objects to dictionaries."""
         for tool_name, tool_info in self.tool_manager.tools.items():
             if isinstance(tool_info, FormattedTool):
                 self.tool_manager.tools[tool_name] = {
                     "input_schema": tool_info.input_schema,
                     "related_server": tool_info.related_server,
                     "generic_schema": tool_info.generic_schema,
+                    "description": tool_info.description,
                 }
                 continue
 
-            logger.warning(
-                f"MC: Invalid tool format for '{tool_name}'. "
-                "Expected an instance of FormattedTool."
-            )
+            logger.warning(f"MC: Invalid tool format for '{tool_name}'")
 
     def _dump_prompts(self) -> None:
-        """Dump the constructed prompts to the prompts file."""
+        """Save prompts to file."""
         self._reformat_prompts_to_dict()
         self.servers_prompt.write_text(
             json.dumps(self.prompts, indent=4), encoding="utf-8"
         )
-        logger.debug(f"MC: Dumped prompts to '{self.servers_prompt}'")
 
     def _dump_tools(self) -> None:
-        """Dump the formatted tools to the tools file."""
+        """Save tools to file."""
         self._reformat_tools_to_dict()
         self.tool_manager.formatted_tools_path.write_text(
             json.dumps(self.tool_manager.tools, indent=4), encoding="utf-8"
         )
-        logger.debug(f"MC: Dumped tools to '{self.tool_manager.formatted_tools_path}'")
 
     async def get_servers_info(self) -> None:
-        """Get the tools information from the MCP servers."""
+        """Fetch tool information from MCP servers."""
         for server_name in self.server_manager.servers.keys():
-            async with MCPClient(self.server_manager) as client:
-                try:
-                    await client.connect_to_server(server_name)
-                except Exception as e:
-                    logger.error(
-                        f"MC: Failed to connect to server '{server_name}': {e}"
-                    )
-                    logger.error(f"MC: Cannot get the info of server '{server_name}'")
-                    continue
-                self.servers_info[server_name] = {}
-                tools = await client.list_tools()
-                for tool in tools:
-                    self.servers_info[server_name][tool.name] = {}
-                    tool_info = self.servers_info[server_name][tool.name]
-                    tool_info["description"] = tool.description
-                    tool_info["parameters"] = tool.inputSchema.get("properties", {})
-                    tool_info["required"] = tool.inputSchema.get("required", [])
-                    self.tool_manager.tools[tool.name] = FormattedTool(
-                        input_schema=tool.inputSchema,
-                        related_server=server_name,
-                    )
+            try:
+                async with MCPClient(self.server_manager) as client:
+                    self.servers_info[server_name] = {}
+                    tools = await client.list_tools(server_name)
+                    for tool in tools:
+                        self.servers_info[server_name][tool.name] = {}
+                        tool_info = self.servers_info[server_name][tool.name]
+                        tool_info["description"] = tool.description
+                        tool_info["parameters"] = tool.inputSchema.get("properties", {})
+                        tool_info["required"] = tool.inputSchema.get("required", [])
+                        self.tool_manager.tools[tool.name] = FormattedTool(
+                            input_schema=tool.inputSchema,
+                            related_server=server_name,
+                            description=tool.description,
+                        )
+            except (ValueError, RuntimeError, ConnectionError) as e:
+                logger.error(f"MC: Failed to get info for server '{server_name}': {e}")
+                if server_name not in self.servers_info:
+                    self.servers_info[server_name] = {}
+                continue
+            except Exception as e:
+                logger.error(f"MC: Unexpected error for server '{server_name}': {e}")
+                if server_name not in self.servers_info:
+                    self.servers_info[server_name] = {}
+                continue
 
     def construct_servers_prompt(self, force: bool = False) -> None:
-        """Construct the prompt for each server and its tools.
-
+        """Build prompt for each server and its tools.
+        
         Args:
-            force (bool, optional): If True, reconstruct prompts for all servers,
-                even if they already exist in the prompts dictionary and didn't have any changes.
-                If False, skip servers by check the server file's last modified time(only custom servers).
-                Default is False.
+            force: If True, reconstruct all prompts regardless of changes.
         """
-
         for server_name, tools in self.servers_info.items():
             server = self.server_manager.get_server(server_name)
             if server.type is MCPServerType.Custom:
@@ -196,16 +152,7 @@ class MixedConstructor:
             prompt = self.prompts.get(server_name, None)
             if isinstance(prompt, MCPServerPrompt):
                 if not force and prompt.mtime == mtime and mtime > 0:
-                    logger.debug(
-                        f"MC: Skipping server '{server_name}' as it has not changed."
-                    )
                     continue
-                else:
-                    logger.debug(
-                        f"MC: Reconstructing prompt for server '{server_name}'."
-                    )
-            else:
-                logger.debug(f"MC: Constructing prompt for server '{server_name}'.")
 
             prompt = f"Server: {server_name}\n"
             prompt += "    Tools:\n"
@@ -234,7 +181,7 @@ class MixedConstructor:
         self._dump_prompts()
 
     def format_tools(self) -> None:
-        """Format the tools information to a standard structure."""
+        """Format tools to OpenAI function-calling compatible schema."""
         for tool_name in self.tool_manager.tools.keys():
             data_object = self.tool_manager.tools.get(tool_name, None)
             if isinstance(data_object, FormattedTool):
@@ -242,13 +189,12 @@ class MixedConstructor:
                 properties: Dict[str, Dict[str, str]] = input_schema.get(
                     "properties", {}
                 )
+                tool_description = data_object.description
                 data_object.generic_schema = {
                     "type": "function",
                     "function": {
                         "name": tool_name,
-                        "description": input_schema.get(
-                            "description", "No description provided."
-                        ),
+                        "description": tool_description,
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -267,21 +213,16 @@ class MixedConstructor:
                         },
                     },
                 }
-                logger.debug(f"MC: Formatted tool '{tool_name}' to standard structure.")
             else:
-                logger.warning(
-                    f"MC: Invalid tool format for '{tool_name}'. "
-                    "Expected an instance of FormattedTool."
-                )
+                logger.warning(f"MC: Invalid tool format for '{tool_name}'")
 
         self._dump_tools()
 
     async def run(self, force: bool = False) -> None:
-        """Run the mixed constructor asynchronously."""
+        """Run the complete process."""
         await self.get_servers_info()
         self.construct_servers_prompt(force)
         self.format_tools()
-
 
 # if __name__ == "__main__":
 #     import asyncio

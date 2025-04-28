@@ -12,7 +12,7 @@ __envs__ = {
 
 from datetime import timedelta
 
-__timeout__ = timedelta(seconds=10)
+__timeout__ = timedelta(seconds=30)
 
 
 mcp = FastMCP("My App")

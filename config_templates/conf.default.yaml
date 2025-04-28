@@ -18,6 +18,10 @@ system_config:
     # Enable mcp_prompt to let LLMs with MCP (Model Context Protocol) to interact with tools.
     # Please note that Agent will decide whether to use this prompt or not.
     mcp_prompt: 'mcp_prompt'
+    # Prompt used when AI is asked to speak proactively
+    proactive_speak_prompt: 'proactive_speak_prompt'
+    # Prompt to enhance the LLM's ability to output speakable text
+    # speakable_prompt: 'speakable_prompt'
 
 # configuration for the default character
 character_config:
@@ -30,8 +34,7 @@ character_config:
 
   # ============== Prompts ==============
 
-  # Persona choice is DEAD
-  # Just enter the persona prompt you want to use below.
+  # Enter the persona prompt you want to use below.
   # If you want to create multiple characters and switch between them,
   #   add characters in characters folder
   persona_prompt: |
@@ -202,11 +205,11 @@ character_config:
 
     # Faster whisper config
     faster_whisper:
-      model_path: 'distil-medium.en' # distil-medium.en is an English-only model
-      #                               use distil-large-v3 if you have a good GPU
+      model_path: 'large-v3-turbo' # model path, name, or id from hf hub
       download_root: 'models/whisper'
       language: 'en' # en, zh, or something else. put nothing for auto-detect.
       device: 'auto' # cpu, cuda, or auto. faster-whisper doesn't support mps
+      compute_type: 'int8'
 
     whisper_cpp:
       # all available models are listed on https://abdeladim-s.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
@@ -223,7 +226,7 @@ character_config:
 
     # FunASR currently needs internet connection on launch
     # to download / check the models. You can disconnect the internet after initialization.
-    # Or you can use Faster-Whisper for complete offline experience
+    # Or you can use sherpa onnx asr or Faster-Whisper for complete offline experience
     fun_asr:
       model_name: 'iic/SenseVoiceSmall' # or 'paraformer-zh'
       vad_model: 'fsmn-vad' # this is only used to make it works if audio is longer than 30s

@@ -1,10 +1,7 @@
-"""MCP Client for Open-LLM-Vtuber.
-
-Reference: https://modelcontextprotocol.io/quickstart/client
-"""
+"""MCP Client for Open-LLM-Vtuber."""
 
 from contextlib import AsyncExitStack
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 from loguru import logger
 from datetime import timedelta
 
@@ -12,42 +9,21 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.types import Tool
 from mcp.client.stdio import stdio_client
 
-from .types import CallableTool
 from .server_manager import MCPServerManager
 
 
-DEFAULT_TIMEOUT = timedelta(seconds=10)
+DEFAULT_TIMEOUT = timedelta(seconds=30)
 
 
 class MCPClient:
     """MCP Client for Open-LLM-Vtuber.
-
-    Usage:
-    1. By async context manager:
-    ```python
-    async with MCPClient(auto_search=True) as client:
-        await client.connect_to_server("example")
-    ```
-    2. By manual:
-    ```python
-    client = MCPClient(auto_search=True)
-    await client.connect_to_server("example")
-    await client.close()
-    ```
+    Manages persistent connections to multiple MCP servers.
     """
 
     def __init__(self, server_manager: MCPServerManager) -> None:
-        """Initialize the MCP Client.
-
-        Args:
-            server_manager (MCPServerManager): The server manager to use for managing servers.
-
-        Raises:
-            TypeError: If the server manager is not an instance of MCPServerManager.
-        """
-        self.session: Optional[ClientSession] = None
+        """Initialize the MCP Client."""
         self.exit_stack: AsyncExitStack = AsyncExitStack()
-        self.read, self.write = None, None
+        self.active_sessions: Dict[str, ClientSession] = {}
 
         if isinstance(server_manager, MCPServerManager):
             self.server_manager = server_manager
@@ -55,33 +31,23 @@ class MCPClient:
             raise TypeError(
                 "MCPC: Invalid server manager. Must be an instance of MCPServerManager."
             )
+        logger.info("MCPC: Initialized MCPClient instance.")
 
-    async def connect_to_server(
-        self, server_name: str, timeout: timedelta = DEFAULT_TIMEOUT
-    ) -> None:
-        """Connect to the specified server.
+    async def _ensure_server_running_and_get_session(
+        self, server_name: str
+    ) -> ClientSession:
+        """Gets the existing session or creates a new one."""
+        if server_name in self.active_sessions:
+            return self.active_sessions[server_name]
 
-        Args:
-            server_name (str): The name of the server to connect to.
-            timeout (datetime.timedelta): The timeout for the connection attempt. Default is 10 seconds.
-
-        Raises:
-            ValueError: If the server is not found in the available servers or not supported.
-            RuntimeError: If node.js is not found in PATH and the server is a JavaScript server.
-        """
-        logger.debug(f"MCPC: Attempting to connect to server '{server_name}'...")
-        # Initialize the server parameters.
+        logger.info(f"MCPC: Starting and connecting to server '{server_name}'...")
         server = self.server_manager.get_server(server_name)
         if not server:
-            logger.error(
-                f"MCPC: Server '{server_name}' not found in available servers."
-            )
             raise ValueError(
                 f"MCPC: Server '{server_name}' not found in available servers."
             )
 
-        if server.timeout:
-            timeout = server.timeout
+        timeout = server.timeout if server.timeout else DEFAULT_TIMEOUT
 
         server_params = StdioServerParameters(
             command=server.command,
@@ -89,73 +55,86 @@ class MCPClient:
             env=server.env,
         )
 
-        # Intialize the session.
-        stdio_transport = await self.exit_stack.enter_async_context(
-            stdio_client(server_params)
-        )
-        self.read, self.write = stdio_transport
-        self.session = await self.exit_stack.enter_async_context(
-            ClientSession(self.read, self.write, read_timeout_seconds=timeout)
-        )
-        await self.session.initialize()
+        try:
+            stdio_transport = await self.exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
+            read, write = stdio_transport
 
-        logger.info(f"MCPC: Connected to server '{server_name}'.")
+            session = await self.exit_stack.enter_async_context(
+                ClientSession(read, write, read_timeout_seconds=timeout)
+            )
+            await session.initialize()
 
-    async def list_tools(self) -> List[Tool]:
-        """List all available tools on the connected server.
+            self.active_sessions[server_name] = session
+            logger.info(f"MCPC: Successfully connected to server '{server_name}'.")
+            return session
+        except Exception as e:
+            logger.exception(f"MCPC: Failed to connect to server '{server_name}': {e}")
+            raise RuntimeError(f"MCPC: Failed to connect to server '{server_name}'.") from e
 
-        Returns:
-            List[mcp.types.Tool]: A list of tools available on the server.
 
-        Raises:
-            RuntimeError: If not connected to a server.
-        """
-        if self.session is None:
-            raise RuntimeError("MCPC: Not connected to any server.")
-
-        logger.debug("MCPC: Listing tools...")
-        response = await self.session.list_tools()
-        logger.debug(f"MCPC: Response from server: {response}")
+    async def list_tools(self, server_name: str) -> List[Tool]:
+        """List all available tools on the specified server."""
+        session = await self._ensure_server_running_and_get_session(server_name)
+        response = await session.list_tools()
         return response.tools
 
-    async def call_tool(self, tool: CallableTool) -> str:
-        """Call a tool on the connected server.
-
-        Args:
-            tool (CallableTool): The tool to call.
-
+    async def call_tool(
+        self, server_name: str, tool_name: str, tool_args: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Call a tool on the specified server.
+        
         Returns:
-            str: The result of the tool call.
-
-        Raises:
-            RuntimeError: If not connected to a server.
-            ValueError: Error from the server while calling the tool.
+            Dict containing the result text and any metadata from the tool response.
         """
-        if self.session is None:
-            raise RuntimeError("MCPC: Not connected to any server.")
+        session = await self._ensure_server_running_and_get_session(server_name)
+        logger.info(f"MCPC: Calling tool '{tool_name}' on server '{server_name}'...")
 
-        logger.info(f"MCPC: Calling tool '{tool.name}'...")
-        logger.debug(f"MCPC: Tool args: {tool.args}")
-
-        response = await self.session.call_tool(tool.name, tool.args)
-        logger.debug(f"MCPC: Response from server: {response}")
+        response = await session.call_tool(tool_name, tool_args)
 
         if response.isError:
+            error_text = response.content[0].text if response.content else "Unknown server error"
             logger.error(
-                f"MCPC: Error calling tool '{tool.name}': {response.content[0].text}"
+                f"MCPC: Error calling tool '{tool_name}': {error_text}"
             )
-            raise ValueError(f"MCPC: {response.content[0].text}")
+            raise ValueError(f"MCPC: Error from server '{server_name}' executing tool '{tool_name}': {error_text}")
 
-        return response.content[0].text
+        result_text = response.content[0].text if response.content and hasattr(response.content[0], 'text') else ""
+        if not result_text and response.content:
+             logger.warning(f"MCPC: Tool '{tool_name}' returned non-text content. Returning empty string.")
+        elif not response.content:
+             logger.warning(f"MCPC: Tool '{tool_name}' returned no content. Returning empty string.")
+
+        # Create result object with content and metadata
+        result = {
+            "content": result_text,
+            "metadata": getattr(response, "metadata", {})
+        }
+        
+        # Add content items to result if available
+        if response.content and len(response.content) > 0:
+            result["content_items"] = []
+            for item in response.content:
+                item_dict = {"type": getattr(item, "type", "text")}
+                # Extract available attributes from content item
+                for attr in ["text", "data", "mimeType"]:
+                    if hasattr(item, attr):
+                        item_dict[attr] = getattr(item, attr)
+                result["content_items"].append(item_dict)
+
+        # For backwards compatibility, make the result string-castable
+        result["__str__"] = result_text
+        
+        return result
 
     async def aclose(self) -> None:
+        """Closes all active server connections."""
+        logger.info(f"MCPC: Closing client instance and {len(self.active_sessions)} active connections...")
         await self.exit_stack.aclose()
-        await self.read.aclose()
-        await self.write.aclose()
-        self.session = None
-        self.read, self.write = None, None
-        self.exit_stack = None
-        logger.info("MCPC: Closed the client session.")
+        self.active_sessions.clear()
+        self.exit_stack = AsyncExitStack()
+        logger.info("MCPC: Client instance closed.")
 
     async def __aenter__(self) -> "MCPClient":
         """Enter the async context manager."""
@@ -165,20 +144,25 @@ class MCPClient:
         """Exit the async context manager."""
         await self.aclose()
         if exc_type:
-            logger.error(f"MCPC: Exception occurred: {exc_type.__name__}")
+            logger.error(f"MCPC: Exception in async context: {exc_value}")
 
 
 # if __name__ == "__main__":
 #     # Test the MCPClient.
-#     import asyncio
-
-#     server_manager = MCPServerManager()
-
 #     async def main():
+#         server_manager = MCPServerManager()
 #         async with MCPClient(server_manager) as client:
-#             await client.connect_to_server("example")
-
-#             # Test error handling by calling a non-existent tool.
-#             await client.call_tool("example_tool", {"arg1": "value1"})
+#             # Assuming 'example' server and 'example_tool' exist
+#             # The old call used: await client.call_tool("example_tool", {"arg1": "value1"})
+#             # The new call needs server name:
+#             try:
+#                 result = await client.call_tool("example", "example_tool", {"arg1": "value1"})
+#                 print(f"Tool result: {result}")
+#                 # Test error handling by calling a non-existent tool
+#                 await client.call_tool("example", "non_existent_tool", {})
+#             except ValueError as e:
+#                 print(f"Caught expected error: {e}")
+#             except Exception as e:
+#                 print(f"Caught unexpected error: {e}")
 
 #     asyncio.run(main())

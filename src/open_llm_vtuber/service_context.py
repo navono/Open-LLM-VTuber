@@ -282,7 +282,10 @@ class ServiceContext:
         logger.debug(f"constructing persona_prompt: '''{persona_prompt}'''")
 
         for prompt_name, prompt_file in self.system_config.tool_prompts.items():
-            if prompt_name == "group_conversation_prompt":
+            if (
+                prompt_name == "group_conversation_prompt"
+                or prompt_name == "proactive_speak_prompt"
+            ):
                 continue
 
             prompt_content = prompt_loader.load_util(prompt_file)

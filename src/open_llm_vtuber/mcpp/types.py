@@ -36,7 +36,7 @@ class MCPServer:
     command: str
     args: List[str] = field(default_factory=list)
     env: Optional[Dict[str, str]] = None
-    timeout: Optional[timedelta] = timedelta(seconds=10)
+    timeout: Optional[timedelta] = timedelta(seconds=30)
     type: MCPServerType = MCPServerType.Custom
     path: Optional[Path] = None
 
@@ -49,11 +49,13 @@ class FormattedTool:
         input_schema (Dict[str, Any]): Input schema for the tool.
         related_server (str): The name of the server that contains the tool.
         generic_schema (Optional[Dict[str, Any]], optional): Generic schema for the tool. Defaults to None.
+        description (str, optional): Description of the tool, usually from the server's tool definition. Defaults to "No description available.".
     """
 
     input_schema: Dict[str, Any]
     related_server: str
     generic_schema: Optional[Dict[str, Any]] = None
+    description: str = "No description available."
 
 
 @dataclass
