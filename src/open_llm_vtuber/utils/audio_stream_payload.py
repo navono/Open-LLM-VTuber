@@ -392,7 +392,6 @@ async def stream_audio_payload(
     buffered_duration_ms = 0.0
     first_mp3_rate: Optional[int] = None  # Still useful if MP3 stream is very short
     sub_sentence_counter = 0
-    stream_finished = False  # Flag to indicate the iterator is exhausted
     block_align = 0  # Initialize block_align
     if audio_format == "wav":
         block_align = channels * sample_width  # Calculate once
@@ -472,7 +471,11 @@ async def stream_audio_payload(
             if not isinstance(chunk, (bytes, bytearray)):
                 logger.warning(f"Skipping non-bytes chunk: {type(chunk)}")
                 continue
-            input_buffer.extend(chunk)
+
+            if input_buffer:
+                input_buffer = input_buffer + chunk
+            else:
+                input_buffer = bytearray(chunk)
 
             # Process buffer as long as enough data is available
             while True:
@@ -480,14 +483,15 @@ async def stream_audio_payload(
                 format_for_pydub: str = ""  # Initialize
 
                 if audio_format == "mp3":
-                    buffer_view = memoryview(input_buffer)
+                    # Create a short-lived view; immediately drop after use
+                    mv = memoryview(input_buffer)
                     consumed_bytes = 0
                     while True:  # Parse all available frames from current input_buffer
                         # Ensure we don't read past the buffer view
-                        if consumed_bytes >= len(buffer_view):
+                        if consumed_bytes >= len(mv):
                             break
                         frame, length, dur_ms, rate = _parse_mp3_frame(
-                            buffer_view[consumed_bytes:]
+                            mv[consumed_bytes:]
                         )
                         if frame is None:
                             break  # Need more data
@@ -507,8 +511,11 @@ async def stream_audio_payload(
                         consumed_bytes += length
 
                     if consumed_bytes > 0:
-                        # More efficient slicing for bytearray
+                        # Slice returns a new bytearray; old one still owned by mv
                         input_buffer = input_buffer[consumed_bytes:]
+
+                    # Release the view
+                    del mv
 
                     # Check if enough *duration* is buffered
                     if buffered_duration_ms >= buffer_duration_ms and mp3_frame_buffer:
@@ -724,7 +731,7 @@ async def stream_audio_payload(
         yield {
             "type": "error",
             "message": f"Fatal processing error: {e}",
-            "note": display_text,
+            "note": display_text.text if display_text else None,
         }
     finally:
         logger.info(
