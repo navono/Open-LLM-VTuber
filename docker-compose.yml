@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  open-llm-vtuber:
+    build:
+      context: .
+      dockerfile: dockerfile
+    image: open-llm-vtuber:latest
+    container_name: open-llm-vtuber
+    network_mode: "host"
+    volumes:
+      # Configuration files
+      - ./conf.yaml:/app/conf.yaml:ro
+      - ./mcp_servers.json:/app/mcp_servers.json:ro
+      # User data directories
+      - ./avatars:/app/avatars
+      - ./backgrounds:/app/backgrounds
+      - ./characters:/app/characters
+      - ./live2d-models:/app/live2d-models
+      # Cache and models
+      - ./cache:/app/cache
+      - ./models:/app/models
+      # Logs
+      - ./logs:/app/logs
+      # Database
+      - ./memory.db:/app/memory.db
+    environment:
+      - HF_HOME=/app/models
+      - MODELSCOPE_CACHE=/app/models
+      # Uncomment to use Hugging Face mirror
+      # - HF_ENDPOINT=https://hf-mirror.com
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12393/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

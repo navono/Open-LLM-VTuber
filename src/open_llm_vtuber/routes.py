@@ -1,12 +1,17 @@
-import os
-import json
 from uuid import uuid4
-import numpy as np
-from datetime import datetime
-from fastapi import APIRouter, WebSocket, UploadFile, File, Response
-from starlette.responses import JSONResponse
+from fastapi import APIRouter, WebSocket, UploadFile, File, Form, HTTPException
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
+from typing import Optional
+import numpy as np
+import tempfile
+import os
+from langdetect import detect
+from datetime import datetime
+from fastapi.responses import JSONResponse, Response
+import json
+from pydub import AudioSegment
+
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
@@ -251,4 +256,146 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
             logger.error(f"Error in TTS WebSocket connection: {e}")
             await websocket.close()
 
+    @router.get("/v1/models")
+    async def list_models():
+        """List available models (OpenAI-compatible endpoint)"""
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": "indextts2",
+                    "object": "model",
+                    "created": 1677610602,
+                    "owned_by": "custom",
+                },
+                {
+                    "id": "funASR",
+                    "object": "model",
+                    "created": 1677610602,
+                    "owned_by": "custom",
+                }
+            ]
+        }
+
+    @router.post("/v1/audio/transcriptions")
+    async def stt_endpoint(
+        file: UploadFile = File(...),
+        model: Optional[str] = Form(None),
+        language: Optional[str] = Form(None),
+        prompt: Optional[str] = Form(None),
+        response_format: Optional[str] = Form("json"),
+        temperature: Optional[float] = Form(0.0),
+    ):
+        """
+        Transcribe audio file using the ASR engine.
+        Compatible with OpenAI's /v1/audio/transcriptions API.
+        
+        Args:
+            file: Audio file to transcribe (flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm)
+            model: Model to use (ignored, uses configured ASR engine)
+            language: Language of the audio (optional)
+            prompt: Optional text to guide the model's style
+            response_format: Format of the response (json, text, srt, verbose_json, vtt)
+            temperature: Sampling temperature (0-1)
+        
+        Returns:
+            Transcription result in the specified format
+        """
+        try:
+            # Read the uploaded file
+            audio_data = await file.read()
+            
+            # Get file extension
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            
+            # Convert audio to numpy array
+            audio_np = await _convert_audio_to_numpy(audio_data, file_extension)
+            
+            # Transcribe using the ASR engine
+            transcription = await default_context_cache.asr_engine.async_transcribe_np(audio_np)
+            
+            detected_language = None
+            try:
+                if transcription:
+                    detected_language = detect(transcription)
+            except Exception:
+                detected_language = None
+            language_out = detected_language or "unknown"
+            
+            # Format response based on response_format
+            if response_format == "text":
+                return transcription
+            elif response_format == "json":
+                return {"text": transcription}
+            elif response_format == "verbose_json":
+                return {
+                    "task": "transcribe",
+                    "language": language_out,
+                    "duration": len(audio_np) / default_context_cache.asr_engine.SAMPLE_RATE,
+                    "text": transcription,
+                }
+            elif response_format in ["srt", "vtt"]:
+                # Simple implementation - return as single segment
+                if response_format == "srt":
+                    return f"1\n00:00:00,000 --> 00:00:10,000\n{transcription}\n"
+                else:  # vtt
+                    return f"WEBVTT\n\n00:00:00.000 --> 00:00:10.000\n{transcription}\n"
+            else:
+                return {"text": transcription}
+                
+        except Exception as e:
+            logger.error(f"Error in transcription endpoint: {e}")
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
     return router
+
+
+async def _convert_audio_to_numpy(audio_data: bytes, file_extension: str) -> np.ndarray:
+    """
+    Convert audio file bytes to numpy array suitable for ASR processing.
+    
+    Args:
+        audio_data: Raw audio file bytes
+        file_extension: File extension (e.g., '.wav', '.mp3', '.ogg')
+    
+    Returns:
+        numpy array of audio samples normalized to [-1, 1]
+    """
+    try:
+        # Create a temporary file to store the audio
+        with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+            temp_file.write(audio_data)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Load audio using pydub
+            audio = AudioSegment.from_file(temp_file_path)
+            
+            # Convert to mono if stereo
+            if audio.channels > 1:
+                audio = audio.set_channels(1)
+            
+            # Convert to 16kHz sample rate (standard for ASR)
+            audio = audio.set_frame_rate(16000)
+            
+            # Convert to numpy array
+            samples = np.array(audio.get_array_of_samples())
+            
+            # Normalize to [-1, 1]
+            if audio.sample_width == 2:  # 16-bit
+                samples = samples.astype(np.float32) / 32768.0
+            elif audio.sample_width == 4:  # 32-bit
+                samples = samples.astype(np.float32) / 2147483648.0
+            else:
+                samples = samples.astype(np.float32) / 128.0
+            
+            return samples
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        logger.error(f"Error converting audio to numpy: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to process audio file: {str(e)}")

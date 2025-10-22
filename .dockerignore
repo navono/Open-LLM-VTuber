@@ -1,0 +1,101 @@
+# Git files
+.git
+.gitignore
+.gitmodules
+.gitattributes
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+.venv/
+.conda/
+conda/
+venv/
+env/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Configuration files (will be mounted or created)
+conf.yaml
+.env
+api_keys.py
+
+# Logs
+logs/
+*.log
+server.log
+
+# Cache and downloaded models
+cache/
+models/
+!models/piper_voice
+
+# User data directories
+avatars/
+backgrounds/
+!backgrounds/README.md
+characters/
+!characters/README.md
+live2d-models/
+!live2d-models/mao_pro
+!live2d-models/shizuku
+
+# Database files
+*.db
+*.db.bk
+memory.db
+mem.json
+
+# Legacy and temporary files
+legacy/
+tmp/
+private/
+chat_history/
+knowledge_base/
+submodules/MeloTTS
+
+# Documentation and development files
+*.md
+!README.md
+doc/
+docs/
+.github/
+.gemini/
+.cursor/
+.claude/
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Specific files
+openapi_assistants.json
+openapi_memgpt.json
+mcp_servers.json
+conf.yaml.backup
+lab.py
+*.exe
+
+# Lock files (keep uv.lock for reproducible builds)
+# pixi.lock
+
+# Pre-commit
+.pre-commit-config.yaml
